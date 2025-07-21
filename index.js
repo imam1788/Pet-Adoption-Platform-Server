@@ -29,6 +29,8 @@ async function run() {
     const db = client.db("pethaven");
     const usersCollection = db.collection("users");
     const petsCollection = db.collection("pets");
+    const adoptionsCollection = db.collection("adoptions");
+
 
     // Home route
     app.get("/", (req, res) => {
@@ -117,6 +119,28 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch pets" });
       }
     });
+
+    app.get("/pets/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const pet = await petsCollection.findOne({ _id: new ObjectId(id) });
+        if (!pet) return res.status(404).send({ error: "Pet not found" });
+        res.send(pet);
+      } catch (error) {
+        res.status(500).send({ error: "Error fetching pet" });
+      }
+    });
+
+    app.post("/adoptions", async (req, res) => {
+      try {
+        const adoption = req.body;
+        const result = await adoptionsCollection.insertOne(adoption);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to submit adoption request" });
+      }
+    });
+
 
 
     // Start server
