@@ -1,7 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const jwt = require("jsonwebtoken");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -27,6 +28,7 @@ async function run() {
 
     const db = client.db("pethaven");
     const usersCollection = db.collection("users");
+    const petsCollection = db.collection("pets");
 
     // Home route
     app.get("/", (req, res) => {
@@ -42,7 +44,6 @@ async function run() {
       }
 
       const existingUser = await usersCollection.findOne({ email: user.email });
-
       if (existingUser) {
         return res.send({ message: "User already exists" });
       }
@@ -52,9 +53,75 @@ async function run() {
       res.send(result);
     });
 
+    // Create JWT Token
+    app.post("/jwt", (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.JWT_SECRET, {
+        expiresIn: "7d",
+      });
 
+      res.send({ token });
+    });
+
+    // Verify JWT Middleware
+    function verifyToken(req, res, next) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).send({ error: "Unauthorized access" });
+      }
+
+      const token = authHeader.split(" ")[1];
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res.status(403).send({ error: "Forbidden access" });
+        }
+
+        req.user = decoded;
+        next();
+      });
+    }
+
+    app.get("/protected", verifyToken, (req, res) => {
+      res.send({
+        message: "This is protected data",
+        user: req.user,
+      });
+    });
+
+    // GET /pets?search=cat&category=Cat&page=1&limit=10
+    app.get("/pets", async (req, res) => {
+      try {
+        const { search = "", category, page = 1, limit = 10 } = req.query;
+
+        const query = {
+          adopted: false,
+          name: { $regex: search, $options: "i" },
+        };
+
+        if (category && category !== "All") {
+          query.category = category;
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const pets = await petsCollection
+          .find(query)
+          .sort({ date: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+
+        const total = await petsCollection.countDocuments(query);
+
+        res.send({ pets, total });
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch pets" });
+      }
+    });
+
+
+    // Start server
     app.listen(port, () => {
-      console.log(`Server is listening on http://localhost:${port}`);
+      console.log(`Server running on http://localhost:${port}`);
     });
   } catch (err) {
     console.error("Failed to connect:", err);
