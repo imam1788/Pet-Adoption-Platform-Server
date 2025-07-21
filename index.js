@@ -30,6 +30,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const petsCollection = db.collection("pets");
     const adoptionsCollection = db.collection("adoptions");
+    const donationCampaignsCollection = db.collection("donationCampaigns");
 
 
     // Home route
@@ -140,6 +141,35 @@ async function run() {
         res.status(500).send({ error: "Failed to submit adoption request" });
       }
     });
+
+    // GET /donation-campaigns?page=1&limit=10
+    app.get("/donation-campaigns", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const campaigns = await donationCampaignsCollection
+          .find({})
+          .sort({ date: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const total = await donationCampaignsCollection.countDocuments();
+
+        res.send({
+          campaigns,
+          total,
+          page,
+          totalPages: Math.ceil(total / limit),
+        });
+      } catch (error) {
+        console.error("Error fetching donation campaigns:", error);
+        res.status(500).send({ error: "Failed to fetch donation campaigns" });
+      }
+    });
+
 
 
 
