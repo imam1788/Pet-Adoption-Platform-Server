@@ -129,10 +129,28 @@ async function run() {
       });
     });
 
-    // GET /pets?search=cat&category=Cat&page=1&limit=10
-    app.get("/pets", async (req, res) => {
+    // Route to save a new pet
+    app.post("/pets", async (req, res) => {
+      const pet = {
+        ...req.body,
+        adopted: false,
+        date: new Date(), 
+      };
+
       try {
-        const { search = "", category, page = 1, limit = 10 } = req.query;
+        const result = await petsCollection.insertOne(pet);
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to save pet" });
+      }
+    });
+
+
+
+    // GET /pets?search=cat&category=Cat&page=1&limit=10
+    app.get("/pets", verifyToken, async (req, res) => {
+      try {
+        const { search = "", category, page = 1, limit = 20 } = req.query;
 
         const query = {
           adopted: false,
