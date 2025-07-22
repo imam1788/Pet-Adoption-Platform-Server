@@ -2,14 +2,40 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const Stripe = require('stripe');
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const app = express();
 const port = process.env.PORT || 5000;
 
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Stripe setup
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// PaymentIntent route
+app.post('/create-payment-intent', async (req, res) => {
+  const { amount } = req.body;
+
+  if (!amount) {
+    return res.status(400).send({ error: 'Amount is required' });
+  }
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100), // Stripe uses cents
+      currency: 'usd',
+      payment_method_types: ['card'],
+    });
+
+    res.send({ clientSecret: paymentIntent.client_secret });
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
 
 // MongoDB Client Setup
 const uri = process.env.MONGO_URI;
@@ -31,6 +57,7 @@ async function run() {
     const petsCollection = db.collection("pets");
     const adoptionsCollection = db.collection("adoptions");
     const donationCampaignsCollection = db.collection("donationCampaigns");
+    const donationsCollection = db.collection("donations");
 
 
     // Home route
@@ -39,6 +66,7 @@ async function run() {
     });
 
     // Save user to DB
+
     app.post("/users", async (req, res) => {
       const user = req.body;
 
@@ -52,9 +80,19 @@ async function run() {
       }
 
       user.role = "user";
+
+      // Ensure photoURL is saved as well
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
+
+    // GET user by email
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await usersCollection.findOne({ email });
+      res.send(user);
+    });
+
 
     // Create JWT Token
     app.post("/jwt", (req, res) => {
@@ -170,7 +208,69 @@ async function run() {
       }
     });
 
+    // GET single donation campaign by ID
+    app.get("/donation-campaigns/:id", async (req, res) => {
+      const { id } = req.params;
+      const campaign = await donationCampaignsCollection.findOne({ _id: new ObjectId(id) });
 
+      if (!campaign) {
+        return res.status(404).send({ error: "Campaign not found" });
+      }
+
+      res.send(campaign);
+    });
+
+    // for recommended campaigns
+    app.get('/recommended-campaigns/:currentId', async (req, res) => {
+      const currentId = req.params.currentId;
+
+      const recommended = await donationCampaignsCollection
+        .find({ _id: { $ne: new ObjectId(currentId) } })
+        .sort({ date: -1 })
+        .limit(3)
+        .toArray();
+
+      res.send(recommended);
+    });
+
+
+    app.post("/donations", verifyToken, async (req, res) => {
+      const {
+        donationId,
+        amount,
+        transactionId,
+        date,
+        status = "succeeded"
+      } = req.body;
+
+      const userEmail = req.user.email;
+
+      if (!donationId || !amount || !transactionId) {
+        return res.status(400).send({ error: "Missing donation details" });
+      }
+
+      try {
+        const donationDoc = {
+          donationId: new ObjectId(donationId),
+          amount,
+          transactionId,
+          donorEmail: userEmail,
+          date: new Date(date),
+          status,
+        };
+
+        const result = await donationsCollection.insertOne(donationDoc);
+
+        await donationCampaignsCollection.updateOne(
+          { _id: new ObjectId(donationId) },
+          { $inc: { donatedAmount: amount } }
+        );
+
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
 
 
     // Start server
