@@ -291,6 +291,57 @@ async function run() {
     });
 
 
+    // Create a new donation campaign
+    app.post('/donation-campaigns', async (req, res) => {
+      try {
+        console.log('Incoming donation campaign:', req.body); // 👈 log input
+
+        const {
+          petName,
+          petImage,
+          targetAmount,
+          lastDate,
+          description,
+          longDesc,
+          ownerEmail,
+        } = req.body;
+
+        if (
+          !petName ||
+          !petImage ||
+          !targetAmount ||
+          !lastDate ||
+          !description ||
+          !longDesc ||
+          !ownerEmail
+        ) {
+          return res.status(400).send({ error: 'All fields are required' });
+        }
+
+        const campaign = {
+          petName,
+          petImage,
+          targetAmount: Number(targetAmount),
+          lastDate: new Date(lastDate),
+          description,
+          longDesc,
+          ownerEmail,
+          donatedAmount: 0,
+          date: new Date(),
+        };
+
+        console.log('Inserting campaign:', campaign); // 👈 log prepared data
+
+        const result = await donationCampaignsCollection.insertOne(campaign);
+
+        res.send(result);
+      } catch (error) {
+        console.error('❌ Server error on /donation-campaigns:', error);
+        res.status(500).send({ error: 'Failed to create donation campaign' });
+      }
+    });
+
+
     // GET /donation-campaigns?page=1&limit=10
     app.get("/donation-campaigns", async (req, res) => {
       try {
@@ -382,6 +433,7 @@ async function run() {
         res.status(500).send({ error: error.message });
       }
     });
+
 
 
     // Start server
