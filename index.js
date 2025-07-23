@@ -292,9 +292,9 @@ async function run() {
 
 
     // Create a new donation campaign
-    app.post('/donation-campaigns', async (req, res) => {
+    app.post('/donation-campaigns', verifyToken, async (req, res) => {
       try {
-        console.log('Incoming donation campaign:', req.body); // 👈 log input
+        console.log('Incoming donation campaign:', req.body);
 
         const {
           petName,
@@ -330,17 +330,96 @@ async function run() {
           date: new Date(),
         };
 
-        console.log('Inserting campaign:', campaign); // 👈 log prepared data
+        console.log('Inserting campaign:', campaign);
 
         const result = await donationCampaignsCollection.insertOne(campaign);
 
         res.send(result);
       } catch (error) {
-        console.error('❌ Server error on /donation-campaigns:', error);
+        console.error('Server error on /donation-campaigns:', error);
         res.status(500).send({ error: 'Failed to create donation campaign' });
       }
     });
 
+    // Get logged-in user's donation campaigns
+    app.get("/donation-campaigns/my", verifyToken, async (req, res) => {
+      try {
+        console.log("User email from token:", req.user.email);
+        const campaigns = await donationCampaignsCollection.find({ ownerEmail: req.user.email }).toArray();
+        console.log("Found campaigns count:", campaigns.length);
+        res.send({ campaigns });
+      } catch (error) {
+        console.error("Error fetching user campaigns:", error);
+        res.status(500).send({ error: "Failed to fetch campaigns" });
+      }
+    });
+
+
+
+    // Pause/unpause a donation campaign
+    app.patch("/donation-campaigns/pause/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { paused } = req.body;
+
+        const result = await donationCampaignsCollection.updateOne(
+          { _id: new ObjectId(id), ownerEmail: req.user.email },
+          { $set: { paused: !!paused } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "Campaign not found or unauthorized" });
+        }
+
+        res.send({ success: true, paused: !!paused });
+      } catch (error) {
+        console.error("Error updating pause status:", error);
+        res.status(500).send({ error: "Failed to update pause status" });
+      }
+    });
+
+    // Get donators for a specific donation campaign
+    app.get("/donations", verifyToken, async (req, res) => {
+      try {
+        const donationId = req.query.donationId;
+        if (!donationId) {
+          return res.status(400).send({ error: "donationId query param required" });
+        }
+
+        const donations = await donationsCollection
+          .find({ donationId: new ObjectId(donationId) })
+          .toArray();
+
+        res.send({ donations });
+      } catch (error) {
+        console.error("Error fetching donations:", error);
+        res.status(500).send({ error: "Failed to fetch donations" });
+      }
+    });
+
+    // for editing specific donation campaign
+    app.patch('/donation-campaigns/:id', verifyToken, async (req, res) => {
+      const { id } = req.params;
+      const updateData = req.body;
+
+      try {
+        // Optionally verify user permission here before updating
+
+        const result = await donationCampaignsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.modifiedCount === 1) {
+          res.json({ success: true });
+        } else {
+          res.status(404).json({ error: 'Donation campaign not found' });
+        }
+      } catch (error) {
+        console.error('Update error:', error);
+        res.status(500).json({ error: 'Server error' });
+      }
+    });
 
     // GET /donation-campaigns?page=1&limit=10
     app.get("/donation-campaigns", async (req, res) => {
