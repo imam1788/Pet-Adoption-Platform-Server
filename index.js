@@ -491,6 +491,16 @@ async function run() {
       }
 
       try {
+        // Check if campaign exists and if paused
+        const campaign = await donationCampaignsCollection.findOne({ _id: new ObjectId(donationId) });
+        if (!campaign) {
+          return res.status(404).send({ error: "Donation campaign not found" });
+        }
+
+        if (campaign.paused) {
+          return res.status(403).send({ error: "Donations are currently paused for this campaign" });
+        }
+
         const donationDoc = {
           donationId: new ObjectId(donationId),
           amount,
@@ -512,8 +522,6 @@ async function run() {
         res.status(500).send({ error: error.message });
       }
     });
-
-
 
     // Start server
     app.listen(port, () => {
