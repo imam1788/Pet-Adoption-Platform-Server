@@ -134,7 +134,7 @@ async function run() {
       const pet = {
         ...req.body,
         adopted: false,
-        date: new Date(), 
+        date: new Date(),
       };
 
       try {
@@ -150,7 +150,7 @@ async function run() {
     // GET /pets?search=cat&category=Cat&page=1&limit=10
     app.get("/pets", verifyToken, async (req, res) => {
       try {
-        const { search = "", category, page = 1, limit = 20 } = req.query;
+        const { search = "", category, page = 1, limit = 30 } = req.query;
 
         const query = {
           adopted: false,
@@ -197,6 +197,99 @@ async function run() {
         res.status(500).send({ error: "Failed to submit adoption request" });
       }
     });
+
+    // Get all pets added by a specific user with pagination
+    app.get("/my-pets", verifyToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        if (!email) {
+          return res.status(400).send({ error: "Email is required" });
+        }
+
+        const query = { ownerEmail: email }; // Adjust field if you're using different one
+        const total = await petsCollection.countDocuments(query);
+
+        const pets = await petsCollection
+          .find(query)
+          .sort({ date: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        res.send({
+          pets,
+          total,
+          page,
+          totalPages: Math.ceil(total / limit),
+        });
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch user pets" });
+      }
+    });
+
+    // Mark pet as adopted
+    app.patch("/pets/adopt/:id", verifyToken, async (req, res) => {
+      const { id } = req.params;
+
+      try {
+        const result = await petsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { adopted: true } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "Pet not found" });
+        }
+
+        res.send({ success: true, message: "Pet marked as adopted" });
+      } catch (error) {
+        res.status(500).send({ error: "Failed to update pet status" });
+      }
+    });
+
+
+    app.patch('/pets/:id', verifyToken, async (req, res) => {
+      try {
+        const petId = req.params.id;
+        const updatedPetData = req.body;
+
+        const result = await petsCollection.updateOne(
+          { _id: new ObjectId(petId) },
+          { $set: updatedPetData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "Pet not found" });
+        }
+
+        res.send({ success: true, message: "Pet updated successfully" });
+      } catch (error) {
+        console.error("Error updating pet:", error);
+        res.status(500).send({ error: "Failed to update pet" });
+      }
+    });
+
+    // Delete a pet by ID
+    app.delete("/pets/:id", verifyToken, async (req, res) => {
+      const { id } = req.params;
+
+      try {
+        const result = await petsCollection.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ error: "Pet not found" });
+        }
+
+        res.send({ success: true, message: "Pet deleted successfully" });
+      } catch (error) {
+        res.status(500).send({ error: "Failed to delete pet" });
+      }
+    });
+
 
     // GET /donation-campaigns?page=1&limit=10
     app.get("/donation-campaigns", async (req, res) => {
