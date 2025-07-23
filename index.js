@@ -523,6 +523,69 @@ async function run() {
       }
     });
 
+    app.get('/donations/my', verifyToken, async (req, res) => {
+      try {
+        const userEmail = req.user.email;
+
+        const donations = await donationsCollection.find({ donorEmail: userEmail }).toArray();
+
+        const campaignIds = donations.map(d => d.donationId);
+        const campaigns = await donationCampaignsCollection
+          .find({ _id: { $in: campaignIds } })
+          .toArray();
+
+        const donationsWithCampaign = donations.map(donation => {
+          const campaign = campaigns.find(c => c._id.equals(donation.donationId));
+          return {
+            _id: donation._id,
+            amount: donation.amount,
+            donorEmail: donation.donorEmail,
+            date: donation.date,
+            transactionId: donation.transactionId,
+            status: donation.status,
+            petName: campaign?.petName || 'Unknown',
+            petImage: campaign?.petImage || '',
+          };
+        });
+
+        res.send(donationsWithCampaign);
+      } catch (error) {
+        console.error('Error fetching user donations:', error);
+        res.status(500).send({ error: 'Failed to fetch donations' });
+      }
+    });
+
+    app.delete('/donations/:donationId', verifyToken, async (req, res) => {
+      const { donationId } = req.params;
+      const userEmail = req.user.email;
+
+      try {
+        const donation = await donationsCollection.findOne({
+          _id: new ObjectId(donationId),
+          donorEmail: userEmail,
+        });
+
+        if (!donation) {
+          return res.status(404).send({ error: 'Donation not found or unauthorized' });
+        }
+        const deleteResult = await donationsCollection.deleteOne({ _id: new ObjectId(donationId) });
+
+        if (deleteResult.deletedCount === 0) {
+          return res.status(500).send({ error: 'Failed to delete donation' });
+        }
+        await donationCampaignsCollection.updateOne(
+          { _id: new ObjectId(donation.donationId) },
+          { $inc: { donatedAmount: -donation.amount } }
+        );
+
+        res.send({ success: true, message: 'Donation refunded successfully' });
+      } catch (error) {
+        console.error('Refund error:', error);
+        res.status(500).send({ error: 'Server error' });
+      }
+    });
+
+
     // Start server
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
