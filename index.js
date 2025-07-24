@@ -198,6 +198,56 @@ async function run() {
       }
     });
 
+    // Get adoption requests for pets added by the logged-in user
+    app.get('/adoptions/my-requests', verifyToken, async (req, res) => {
+      try {
+        const ownerEmail = req.user.email;
+
+        // Find all pet IDs owned by this user
+        const userPets = await petsCollection.find({ ownerEmail }).project({ _id: 1 }).toArray();
+        const petIds = userPets.map(pet => pet._id);
+
+        // Find adoption requests where petId in petIds
+        const stringPetIds = petIds.map(id => id.toString());
+
+        const adoptionRequests = await adoptionsCollection
+          .find({ petId: { $in: stringPetIds } })
+          .toArray();
+        res.send(adoptionRequests);
+      } catch (error) {
+        console.error('Error fetching adoption requests:', error);
+        res.status(500).send({ error: 'Failed to fetch adoption requests' });
+      }
+    });
+
+    // Update adoption request status (Accept / Reject)
+    app.patch('/adoptions/:id/status', verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        if (!['accepted', 'rejected'].includes(status)) {
+          return res.status(400).send({ error: 'Invalid status value' });
+        }
+
+        const result = await adoptionsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: 'Adoption request not found' });
+        }
+
+        res.send({ success: true, message: `Adoption request ${status}` });
+      } catch (error) {
+        console.error('Error updating adoption request status:', error);
+        res.status(500).send({ error: 'Failed to update adoption status' });
+      }
+    });
+
+
+
     // Get all pets added by a specific user with pagination
     app.get("/my-pets", verifyToken, async (req, res) => {
       try {
