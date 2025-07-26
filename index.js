@@ -59,6 +59,50 @@ async function run() {
     const donationCampaignsCollection = db.collection("donationCampaigns");
     const donationsCollection = db.collection("donations");
 
+    // Verify JWT Middleware
+    function verifyToken(req, res, next) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).send({ error: "Unauthorized access" });
+      }
+
+      const token = authHeader.split(" ")[1];
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res.status(403).send({ error: "Forbidden access" });
+        }
+
+        req.user = decoded;
+        next();
+      });
+    }
+
+
+    // Admin role verification middleware
+    async function verifyAdmin(req, res, next) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).send({ error: "Unauthorized access, no token" });
+      }
+
+      const token = authHeader.split(" ")[1];
+      jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+        if (err) {
+          return res.status(403).send({ error: "Forbidden access, invalid token" });
+        }
+
+        const email = decoded.email;
+
+        const user = await usersCollection.findOne({ email });
+
+        if (!user || user.role !== "admin") {
+          return res.status(403).send({ error: "Admin access required" });
+        }
+
+        req.user = decoded;
+        next();
+      });
+    }
 
     // Home route
     app.get("/", (req, res) => {
@@ -87,40 +131,87 @@ async function run() {
     });
 
     // GET user by email
-    app.get("/users/:email", async (req, res) => {
+    app.get("/users/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send(user);
     });
 
+    // Get all users - Admin only route example
+    app.get("/users", verifyAdmin, async (req, res) => {
+      try {
+        const users = await usersCollection.find().toArray();
+        res.send(users);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch users" });
+      }
+    });
+
+    // Make user admin (Admin only)
+    app.patch('/users/make-admin/:id', verifyAdmin, async (req, res) => {
+      try {
+        const userId = req.params.id;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { role: 'admin' } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: 'User not found' });
+        }
+
+        res.send({ success: true, message: 'User is now admin' });
+      } catch (error) {
+        res.status(500).send({ error: 'Failed to update user role' });
+      }
+    });
+
+    // Ban user (Admin only)
+    app.patch('/users/ban/:id', verifyAdmin, async (req, res) => {
+      try {
+        const userId = req.params.id;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { banned: true } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: 'User not found' });
+        }
+
+        res.send({ success: true, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).send({ error: 'Failed to ban user' });
+      }
+    });
+
 
     // Create JWT Token
-    app.post("/jwt", (req, res) => {
-      const user = req.body;
-      const token = jwt.sign(user, process.env.JWT_SECRET, {
+    app.post("/jwt", async (req, res) => {
+      const { email } = req.body;
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(401).send({ message: "Unauthorized" });
+      }
+
+      // Block banned users
+      if (user.banned) {
+        return res.status(403).send({ message: "User is banned" });
+      }
+
+      // Issue token if not banned
+      const token = jwt.sign({ email }, process.env.JWT_SECRET, {
         expiresIn: "7d",
       });
 
       res.send({ token });
     });
 
-    // Verify JWT Middleware
-    function verifyToken(req, res, next) {
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        return res.status(401).send({ error: "Unauthorized access" });
-      }
 
-      const token = authHeader.split(" ")[1];
-      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-        if (err) {
-          return res.status(403).send({ error: "Forbidden access" });
-        }
-
-        req.user = decoded;
-        next();
-      });
-    }
 
     app.get("/protected", verifyToken, (req, res) => {
       res.send({
@@ -187,6 +278,32 @@ async function run() {
         res.status(500).send({ error: "Error fetching pet" });
       }
     });
+
+    // Admin gets all pets
+    app.get('/admin/pets', verifyToken, verifyAdmin, async (req, res) => {
+      const pets = await petsCollection.find().toArray();
+      res.send({ pets });
+    });
+
+
+    // Delete pet
+    app.delete('/pets/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const result = await petsCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    // Toggle adoption status
+    app.patch('/pets/status/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const { adopted } = req.body;
+      const result = await petsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { adopted } }
+      );
+      res.send(result);
+    });
+
 
     app.post("/adoptions", async (req, res) => {
       try {
