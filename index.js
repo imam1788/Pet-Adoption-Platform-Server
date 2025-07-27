@@ -564,6 +564,8 @@ async function run() {
       }
     });
 
+
+
     // for editing specific donation campaign
     app.patch('/donation-campaigns/:id', verifyToken, async (req, res) => {
       const { id } = req.params;
@@ -627,6 +629,37 @@ async function run() {
 
       res.send(campaign);
     });
+
+    // Get all donation campaigns (admin-only)
+    app.get("/admin/all-donations", verifyToken, verifyAdmin, async (req, res) => {
+      const campaigns = await donationCampaignsCollection
+        .find({
+          paused: { $in: [true, false] },
+          ownerEmail: { $exists: true },
+        })
+        .toArray();
+      res.send(campaigns);
+    });
+
+    // Toggle pause/unpause
+    app.patch("/admin/campaigns/toggle-pause/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const { id } = req.params;
+      const { paused } = req.body;
+      const result = await donationCampaignsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { paused } }
+      );
+      res.send(result);
+    });
+
+    // Delete campaign
+    app.delete("/admin/campaigns/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const { id } = req.params;
+      const result = await donationCampaignsCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+
 
     // for recommended campaigns
     app.get('/recommended-campaigns/:currentId', async (req, res) => {
