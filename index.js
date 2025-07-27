@@ -49,7 +49,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     console.log("Connected to MongoDB");
 
     const db = client.db("pethaven");
@@ -68,6 +68,7 @@ async function run() {
 
       const token = authHeader.split(" ")[1];
       jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        console.log("Decoded JWT user:", decoded);
         if (err) {
           return res.status(403).send({ error: "Forbidden access" });
         }
@@ -132,10 +133,22 @@ async function run() {
 
     // GET user by email
     app.get("/users/:email", verifyToken, async (req, res) => {
-      const email = req.params.email;
-      const user = await usersCollection.findOne({ email });
-      res.send(user);
+      try {
+        const email = req.params.email.toLowerCase();
+        console.log("Fetching user by email:", email);
+
+        const user = await usersCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).send({ error: "User not found" });
+        }
+
+        res.send(user);
+      } catch (error) {
+        console.error("Error fetching user:", error);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
     });
+
 
     // Get all users - Admin only route example
     app.get("/users", verifyAdmin, async (req, res) => {
@@ -239,7 +252,7 @@ async function run() {
 
 
     // GET /pets?search=cat&category=Cat&page=1&limit=10
-    app.get("/pets", verifyToken, async (req, res) => {
+    app.get("/pets", async (req, res) => {
       try {
         const { search = "", category, page = 1, limit = 30 } = req.query;
 
@@ -253,6 +266,7 @@ async function run() {
         }
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
+
         const pets = await petsCollection
           .find(query)
           .sort({ date: -1 })
@@ -262,11 +276,12 @@ async function run() {
 
         const total = await petsCollection.countDocuments(query);
 
-        res.send({ pets, total });
+        res.send({ pets, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
       } catch (error) {
         res.status(500).send({ error: "Failed to fetch pets" });
       }
     });
+
 
     app.get("/pets/:id", async (req, res) => {
       try {
@@ -287,7 +302,7 @@ async function run() {
 
 
     // Delete pet
-    app.delete('/pets/:id', verifyToken, verifyAdmin, async (req, res) => {
+    app.delete('/admin/pets/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const result = await petsCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
@@ -723,19 +738,30 @@ async function run() {
       }
     });
 
+
+
     app.get('/donations/my', verifyToken, async (req, res) => {
       try {
         const userEmail = req.user.email;
 
+        console.log("User from token:", req.user.email);
+
+        // Fetch only the donations of the current user
         const donations = await donationsCollection.find({ donorEmail: userEmail }).toArray();
 
-        const campaignIds = donations.map(d => d.donationId);
+        // Convert donationId (string) to ObjectId
+        const campaignIds = donations.map(d => new ObjectId(d.donationId));
+
+        // Fetch corresponding donation campaigns
         const campaigns = await donationCampaignsCollection
           .find({ _id: { $in: campaignIds } })
           .toArray();
 
+        // Attach campaign info to each donation
         const donationsWithCampaign = donations.map(donation => {
-          const campaign = campaigns.find(c => c._id.equals(donation.donationId));
+          const campaign = campaigns.find(c =>
+            c._id.equals(new ObjectId(donation.donationId))
+          );
           return {
             _id: donation._id,
             amount: donation.amount,
