@@ -335,22 +335,21 @@ async function run() {
       try {
         const ownerEmail = req.user.email;
 
-        // Find all pet IDs owned by this user
         const userPets = await petsCollection.find({ ownerEmail }).project({ _id: 1 }).toArray();
-        const petIds = userPets.map(pet => pet._id);
 
-        // Find adoption requests where petId in petIds
-        const stringPetIds = petIds.map(id => id.toString());
+        // Convert ObjectIds to strings because petId in adoption requests is string
+        const petIdStrings = userPets.map(pet => pet._id.toString());
 
-        const adoptionRequests = await adoptionsCollection
-          .find({ petId: { $in: stringPetIds } })
-          .toArray();
+        // Query adoption requests where petId is in string array
+        const adoptionRequests = await adoptionsCollection.find({ petId: { $in: petIdStrings } }).toArray();
+
         res.send(adoptionRequests);
       } catch (error) {
         console.error('Error fetching adoption requests:', error);
         res.status(500).send({ error: 'Failed to fetch adoption requests' });
       }
     });
+
 
     // Update adoption request status (Accept / Reject)
     app.patch('/adoptions/:id/status', verifyToken, async (req, res) => {
@@ -742,22 +741,21 @@ async function run() {
 
     app.get('/donations/my', verifyToken, async (req, res) => {
       try {
-        const userEmail = req.user.email;
+        const userEmail = req.user.email.toLowerCase(); // Normalize
 
-        console.log("User from token:", req.user.email);
+        console.log("User from token:", userEmail);
 
-        // Fetch only the donations of the current user
-        const donations = await donationsCollection.find({ donorEmail: userEmail }).toArray();
+        // Case-insensitive query
+        const donations = await donationsCollection.find({
+          donorEmail: { $regex: `^${userEmail}$`, $options: "i" }
+        }).toArray();
 
-        // Convert donationId (string) to ObjectId
         const campaignIds = donations.map(d => new ObjectId(d.donationId));
 
-        // Fetch corresponding donation campaigns
         const campaigns = await donationCampaignsCollection
           .find({ _id: { $in: campaignIds } })
           .toArray();
 
-        // Attach campaign info to each donation
         const donationsWithCampaign = donations.map(donation => {
           const campaign = campaigns.find(c =>
             c._id.equals(new ObjectId(donation.donationId))
@@ -780,6 +778,7 @@ async function run() {
         res.status(500).send({ error: 'Failed to fetch donations' });
       }
     });
+
 
     app.delete('/donations/:donationId', verifyToken, async (req, res) => {
       const { donationId } = req.params;
@@ -808,6 +807,99 @@ async function run() {
       } catch (error) {
         console.error('Refund error:', error);
         res.status(500).send({ error: 'Server error' });
+      }
+    });
+
+    app.get("/dashboard/stats", verifyToken, async (req, res) => {
+      try {
+        const email = req.user.email;
+
+        // --- Total pets added by this user ---
+        const totalPets = await petsCollection.countDocuments({ ownerEmail: email });
+
+        // --- Total donations made by this user ---
+        const totalDonations = await donationsCollection.countDocuments({ donorEmail: email });
+
+        // --- Pending adoption requests for user's pets ---
+        const userPets = await petsCollection.find({ ownerEmail: email }).project({ _id: 1 }).toArray();
+        const petIds = userPets.map(p => p._id.toString());
+        const pendingRequests = await adoptionsCollection.countDocuments({
+          petId: { $in: petIds },
+          status: "pending"
+        });
+
+        // --- Campaign stats ---
+        const campaigns = await donationCampaignsCollection.find({ ownerEmail: email }).toArray();
+        const activeCampaigns = campaigns.filter(c => !c.paused).length;
+        const pausedCampaigns = campaigns.filter(c => c.paused).length;
+        const completedCampaigns = campaigns.filter(c => c.donatedAmount >= c.targetAmount).length;
+
+        // --- Pets per month ---
+        const petsPerMonthAgg = await petsCollection.aggregate([
+          { $match: { ownerEmail: email } },
+          { $group: { _id: { $month: "$date" }, count: { $sum: 1 } } }
+        ]).toArray();
+
+        const petsPerMonth = petsPerMonthAgg.map(item => ({
+          month: new Date(0, item._id - 1).toLocaleString("default", { month: "short" }),
+          count: item.count,
+        }));
+
+        // --- Campaigns per month ---
+        const campaignsPerMonthAgg = await donationCampaignsCollection.aggregate([
+          { $match: { ownerEmail: email } },
+          { $group: { _id: { $month: "$startDate" }, count: { $sum: 1 } } } // assuming startDate exists
+        ]).toArray();
+
+        const campaignsPerMonth = campaignsPerMonthAgg.map(item => ({
+          month: new Date(0, item._id - 1).toLocaleString("default", { month: "short" }),
+          count: item.count,
+        }));
+
+        // --- Send all stats ---
+        res.send({
+          totalPets,
+          totalDonations,
+          pendingRequests,
+          petsPerMonth,
+          activeCampaigns,
+          pausedCampaigns,
+          completedCampaigns,
+          campaignsPerMonth
+        });
+
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch stats" });
+      }
+    });
+
+    app.get("/api/users/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        res.json(user);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch user profile" });
+      }
+    });
+
+    // ✅ Update user profile
+    app.put("/api/users/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { name, photoURL, phone, address } = req.body;
+
+        const updatedUser = await User.findOneAndUpdate(
+          { email },
+          { name, photoURL, phone, address },
+          { new: true, upsert: false }
+        );
+
+        res.json(updatedUser);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to update user profile" });
       }
     });
 
